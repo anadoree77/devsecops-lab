@@ -1,30 +1,51 @@
+Xrequire('dotenv').config();
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const { body, validationResult } = require('express-validator');
+
 const app = express();
 
-const DB_CONNECTION = "mongodb://admin:SuperSecret123!@prod-db.company.com:27017/myapp";
-const STRIPE_SECRET_KEY = "sk_live_123456789";
-const SENDGRID_API_KEY = "SG.test-test-test";
+const SECRET = process.env.JWT_SECRET;
 
-app.use(express.json());
+app.use(helmet());
+app.use(express.json({ limit: '10kb' }));
 
-app.post('/api/login', (req, res) => {
-  const { username, password } = req.body;
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: 'Too many login attempts'
+});
 
-  if (username === 'admin' && password === 'admin') {
-    const token = jwt.sign({ username }, "INSECURE_SECRET");
-    res.json({ token });
-  } else {
-    res.status(401).json({ error: 'Invalid credentials' });
+app.post(
+  '/api/login',
+  loginLimiter,
+  [
+    body('username').isString().trim().notEmpty(),
+    body('password').isString().isLength({ min: 8 })
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { username, password } = req.body;
+
+    if (username === process.env.ADMIN_USER && password === process.env.ADMIN_PASS) {
+      const token = jwt.sign({ username }, SECRET, { expiresIn: '1h' });
+      res.json({ token });
+    } else {
+      res.status(401).json({ error: 'Invalid credentials' });
+    }
   }
+);
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'OK' });
 });
 
-app.get('/debug', (req, res) => {
-  res.json({
-    db: DB_CONNECTION,
-    stripe: STRIPE_SECRET_KEY,
-    sendgrid: SENDGRID_API_KEY
-  });
-});
+app.listen(3000, () => console.log('Secure server running'));
 
-app.listen(3000, () => console.log("Server running"));
